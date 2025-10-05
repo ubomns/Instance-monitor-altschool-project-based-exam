@@ -1,229 +1,218 @@
-# 🚀 Instance Monitor Altschool Project-based Exam
+# 🌩️ From Cloud Novice to Production Infrastructure on AWS  
+### How I Went from “What’s a VPC?” to Deploying My First Load-Balanced Application  
 
-## 📘 Overview  
-This repository shows a hands-on deployment of a simple web page on AWS using two hosting approaches:
-
-Compute-based: 2 × EC2 instances running NGINX, fronted by an Application Load Balancer (ALB).
-
-Storage-based: the same HTML file hosted as a Static Website on S3.
-
-The page displays the instance IP dynamically (via Ansible templating). This project demonstrates provisioning, configuration management, automation, and a short comparison between EC2+ALB and S3 static hosting.
-
-It showcases skills in **cloud infrastructure setup, configuration management, automation, and documentation**, using **Ansible** and **AWS services** to achieve an end-to-end DevOps deployment.  
+*By **Nsikak Ubom**, Application Manager & Cloud Enthusiast*  
+*Helping teams bridge technology and business through cloud-driven innovation.*
 
 ---
 
-## 🎯 Project Objectives  
-| Task | Description | Weight |
-|------|--------------|--------|
-| **1. EC2 Setup** | Launch two EC2 instances on AWS (Free Tier). | 10% |
-| **2. HTML Page** | Create or clone a simple HTML page that displays the instance’s IP address dynamically. | 15% |
-| **3. Ansible Automation** | Use Ansible to install NGINX, enable it on boot, and deploy the HTML page on both EC2 instances. | 25% |
-| **4. Load Balancer Setup** | Configure an Application Load Balancer (ALB) to distribute traffic between the EC2 instances. | 20% |
-| **5. S3 Static Website** | Deploy the same HTML file to an S3 bucket and enable static website hosting. Compare this setup with the EC2+ALB configuration. | 15% |
-| **6. Documentation** | Document the full process in a Medium article (no plagiarism). | 15% |
+Six months ago, I couldn’t tell you the difference between a subnet and a security group.  
+Today, I’m deploying automated, multi-server applications with load balancers — and actually *understanding why* each step matters.  
+
+This is how I went from *“what’s a VPC?”* to *“hello, production infrastructure.”*
 
 ---
 
-## 🧰 Tech Stack  
-- **Cloud Provider:** AWS  
-- **Compute:** EC2  
-- **Load Balancing:** Application Load Balancer (ALB)  
-- **Storage:** S3 (Static Website Hosting)  
-- **Configuration Management:** Ansible  
-- **Web Server:** NGINX  
-- **Languages:** HTML, Shell, YAML  
+## 🧩 Step 1: Build the Network Foundation  
+
+When I first started, the **Virtual Private Cloud (VPC)** sounded intimidating.  
+Turns out, it’s just your **own private network inside AWS** — like a personal data center in the cloud.  
+
+**Create a VPC:**
+```
+CIDR: 10.0.0.0/16
+```
+
+This gives you a private network with up to 65,536 IP addresses.
+
+**Subnets (for high availability):**
+```
+Subnet A: 10.0.1.0/24 (us-east-1a)
+Subnet B: 10.0.2.0/24 (us-east-1b)
+```
+
+Separate AZs (Availability Zones) mean resilience — if one data center fails, your app keeps running in the other.
+
+Add an **Internet Gateway** for external access and create a route table:
+```
+Destination: 0.0.0.0/0  
+Target: Internet Gateway
+```
+
+**Security Groups:**
+- ALB SG: Allow HTTP (80) from anywhere  
+- EC2 SG: Allow HTTP only from ALB SG, and SSH (22) only from your IP  
+
+> 💡 **Tip:** Security Groups act like your firewall.  
+> They decide who can “knock” on your servers — and how.
 
 ---
 
-## 🏗️ Architecture Overview  
+## 🖥️ Step 2: Launch EC2 Instances  
 
-add image of architecture
+Once your network is ready, launch two servers (EC2 instances), one per subnet.  
 
+**Recommended configuration:**
+- Type: `t2.micro` (Free Tier)
+- OS: Ubuntu 24.04 LTS
+- Count: 2 (one per subnet)
+- Storage: 8GB gp3
+
+> ⚙️ Enable “Auto-assign public IP” temporarily for setup.  
+
+Now you’ve got two servers in different zones — a simple yet resilient architecture.  
+
+> 💬 *Each EC2 instance is a virtual machine. Splitting them across zones helps your app survive outages.*
 
 ---
 
-⚙️ Setup Instructions
-1. Launch EC2 Instances
+## ⚙️ Step 3: Automate Setup with Ansible  
 
-Sign in to the AWS Console.
+Manually configuring servers gets old fast.  
+**Ansible** automates this with playbooks that ensure consistent setup every time.  
 
-Launch two EC2 instances (Amazon Linux 2 / Ubuntu — Free Tier).
-
-Create / attach a key pair for SSH access.
-
-Configure a Security Group: allow SSH (22) from your IP and HTTP (80) from anywhere (or as required).
-
-Note the public DNS / IP addresses of both instances.
-
-2. HTML Template (dynamic IP)
-
-Create a Jinja2 template (index.html.j2) that Ansible will populate with the instance IP:
-
-<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <title>EC2 Instance Info</title>
-  </head>
-  <body>
-    <h2>Welcome to my EC2 Instance!</h2>
-    <p>Private IP: <strong>{{ ansible_default_ipv4.address }}</strong></p>
-  </body>
-</html>
-
-
-Note: ansible_default_ipv4.address is provided by Ansible facts gathered on the target host.
-
-3. Ansible: inventory & playbook
-
-Sample inventory (inventory.ini):
-
+**Inventory file (`inventory.ini`):**
+```
 [webservers]
-ec2-1-public-dns ansible_host=ec2-1-public-ip ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/mykey.pem
-ec2-2-public-dns ansible_host=ec2-2-public-ip ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/mykey.pem
+web1 ansible_host=<ip1> ansible_user=ec2-user ansible_ssh_private_key_file=my-key.pem
+web2 ansible_host=<ip2> ansible_user=ec2-user ansible_ssh_private_key_file=my-key.pem
+```
 
-
-Playbook (deploy.yml):
-
-- hosts: webservers
+**Playbook (`deploy.yml`):**
+```yaml
+- name: Deploy website
+  hosts: webservers
   become: yes
-  gather_facts: yes
-  vars:
-    www_root: /var/www/html
-
   tasks:
-    - name: Install NGINX (Debian/Ubuntu)
-      apt:
-        name: nginx
-        state: present
-        update_cache: yes
-      when: ansible_os_family == 'Debian'
+    - yum: name='*' state=latest
+    - yum: name=[nginx, git] state=present
+    - git: repo='https://github.com/your/repo.git' dest=/tmp/website
+    - copy: src=/tmp/website/ dest=/usr/share/nginx/html/ remote_src=yes
+    - systemd: name=nginx state=started enabled=yes
+```
 
-    - name: Install NGINX (RedHat/CentOS/Amazon)
-      yum:
-        name: nginx
-        state: present
-      when: ansible_os_family == 'RedHat'
-
-    - name: Ensure nginx is enabled and started
-      service:
-        name: nginx
-        enabled: yes
-        state: started
-
-    - name: Create www root (if missing)
-      file:
-        path: "{{ www_root }}"
-        state: directory
-        owner: root
-        group: root
-        mode: '0755'
-
-    - name: Deploy index.html from template
-      template:
-        src: index.html.j2
-        dest: "{{ www_root }}/index.html"
-        mode: '0644'
-
-
-Run the playbook:
-
+**Run it:**
+```bash
 ansible-playbook -i inventory.ini deploy.yml
+```
 
+> 💡 **Insight:** Ansible connects to your servers via SSH and runs all tasks simultaneously.  
+> This is how professionals manage multiple environments — consistently and quickly.
 
-Make sure your local machine has network access (SSH) to the EC2 instances and Ansible can connect using the key file.
+---
 
-4. Application Load Balancer (ALB)
+## ⚖️ Step 4: Configure Load Balancing  
 
-In AWS Console → EC2 → Load Balancers → Create Load Balancer → Application Load Balancer.
+Next, set up an **Application Load Balancer (ALB)** to distribute traffic evenly between servers.  
+If one instance fails, the other automatically takes over.
 
-Choose appropriate VPC & subnets.
+**Target Group:**
+- Protocol: HTTP  
+- Port: 80  
+- Health Check Path: `/`
 
-Configure a listener on HTTP:80.
+**ALB Setup:**
+- Internet-facing  
+- Mapped to both subnets  
+- Security group allows HTTP (80)  
+- Listener forwards traffic to Target Group  
 
-Create a Target Group (target type: instance), register both EC2 instances.
+AWS provides a DNS like:  
+```
+alb-xxxx.us-east-1.elb.amazonaws.com
+```
 
-Configure health checks (e.g., path /index.html or /).
+Visit that link in your browser — refreshing the page alternates between your EC2 servers.  
 
-Finish creation and note the ALB DNS name. Visit the ALB DNS to see the website (requests will be routed to EC2 instances).
+> ✅ You’ve just built a **redundant, fault-tolerant web infrastructure**.  
 
-5. S3 Static Website Hosting
+> ⚠️ If one instance fails a health check, ALB automatically routes traffic to the healthy one.
 
-Create an S3 bucket with a globally unique name.
+---
 
-Upload index.html (rendered file) to the bucket. Example with AWS CLI:
+## 💰 Step 5: Compare EC2 vs. S3 Hosting Costs  
 
-aws s3 mb s3://my-unique-bucket --region us-east-1
-aws s3 cp index.html s3://my-unique-bucket/index.html --acl public-read
-aws s3 website s3://my-unique-bucket/ --index-document index.html
+After building this, I wanted to see how much it really costs.  
+Turns out — static sites are far cheaper on **Amazon S3**.
 
+| Feature | EC2 + ALB | S3 Static |
+|----------|------------|------------|
+| Compute | $16.50 | $0 |
+| Load Balancing | $22.50 | $0 |
+| Storage | Included | $0.023 |
+| Requests | Included | $0.012 |
+| Data Transfer | $0.90 | $0.90 |
+| **Total** | **≈$43/mo** | **≈$1/mo** |
 
-Make the object (and bucket policy) publicly readable. Example bucket policy (replace my-unique-bucket):
+**When to choose:**
+- **S3** → Static sites, landing pages, portfolios  
+- **EC2** → APIs, authentication, or backend logic  
 
-{
-  "Version":"2012-10-17",
-  "Statement":[{
-    "Sid":"PublicReadGetObject",
-    "Effect":"Allow",
-    "Principal": "*",
-    "Action":["s3:GetObject"],
-    "Resource":["arn:aws:s3:::my-unique-bucket/*"]
-  }]
-}
+> 💡 *S3 is perfect for simple hosting — no servers to manage, and nearly free.*
 
+---
 
-Visit the S3 website endpoint from the bucket properties and compare response time and behavior with the ALB endpoint.
+## 🧰 Step 6: Common Issues (and Fixes)
 
-🧠 Quick Comparison: EC2 + ALB vs S3 Hosting
-Feature	EC2 + ALB	S3 Static Website
-Hosting type	Compute-based	Storage-based
-Scalability	Manual / Auto Scaling	Automatic (object storage)
-Cost	Higher (instance runtime)	Lower (storage + requests)
-Maintenance	OS & server updates required	Minimal
-Use cases	Dynamic apps, server-side logic	Static content, landing pages, docs
-📁 Suggested Repo Structure
-.
-├── README.md
-├── inventory.ini
-├── deploy.yml
-├── index.html.j2
-├── index.html            # optional: rendered file for S3 upload
-└── docs/
-    └── medium-article.md
+| Issue | Fix |
+|-------|-----|
+| `Permission denied` (SSH/Ansible) | Run `chmod 400 my-key.pem` |
+| ALB Health Checks failing | Allow EC2 SG to accept traffic only from ALB SG |
+| Website unreachable | Ensure NGINX is running and port 80 is open |
 
-📝 Documentation
+> ⚠️ **Pro Tip:**  
+> When something doesn’t work, check your security groups and routing first.  
+> 80% of AWS issues live there.
 
-Write a Medium article to document:
+---
 
-Design decisions and steps followed
+## 🧹 Step 7: Cleanup to Avoid Surprise Bills  
 
-Ansible playbook explanation
+Delete resources in this order:
+1. Load Balancer  
+2. Target Group  
+3. EC2 Instances  
+4. Internet Gateway  
+5. Subnets & Route Tables  
+6. VPC  
 
-ALB configuration and health checks
+Set a billing alert at **$5/month** to avoid unexpected charges.
 
-S3 static hosting setup and bucket policy
+> 💡 *Cloud learning is great — cloud billing surprises are not.*
 
-A short comparison of costs, scalability, and maintenance
+---
 
-Link to your Medium article can be added here once published.
+## 🚀 Final Thoughts  
 
-📚 Learning Outcomes
+This project gave me my first hands-on taste of **production-grade infrastructure** on AWS:  
+- Redundant servers across availability zones  
+- Secure networking  
+- Automated configuration with Ansible  
+- Fault-tolerant load balancing  
 
-Provision EC2 instances and configure security groups
+From here, you can enhance it with:
+- HTTPS via AWS Certificate Manager  
+- Auto Scaling for traffic spikes  
+- CloudWatch for monitoring  
+- CloudFront for faster delivery  
 
-Automate server provisioning and deployment using Ansible
+> 🧠 **Lesson:** Every cloud expert started by deploying something small — and learning from it.  
+> Keep building. Keep breaking. Keep learning. 🌱
 
-Configure NGINX to host a static page and enable it on boot
+---
 
-Set up an Application Load Balancer (ALB) and target groups
+## ✍️ About the Author  
 
-Host a static website on S3 and compare hosting approaches
+**Nsikak Ubom** is an Application Manager passionate about cloud architecture, DevOps, and bridging the gap between technology and business growth.  
+He writes about practical cloud learning, automation, and digital innovation.
 
-Produce clear technical documentation for reproducibility
+📬 *Follow Nsikak on Medium for more AWS and DevOps learning stories.*
 
-👨‍💻 Author
+---
 
-Nsikakobong Ubom
-Cloud & DevOps Enthusiast | Application & Technology Manager
+❤️ Written with passion from Lagos, Nigeria  
+🕊️ Published on [Medium](https://medium.com)  
+
+**Tags:** `#AWS` `#DevOps` `#InfrastructureAsCode` `#CloudArchitecture` `#Ansible` `#LoadBalancing` `#VPC`
+
 
