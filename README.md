@@ -1,7 +1,7 @@
 # 🌩️ From Cloud Novice to Production Infrastructure on AWS  
 ### How I Went from “What’s a VPC?” to Deploying My First Load-Balanced Application  
 
-*By **Nsikak Ubom**, Application Manager & Cloud Enthusiast*  
+*By **Nsikak Ubom**, Technical Program Manager & Cloud Enthusiast*  
 *Helping teams bridge technology and business through cloud-driven innovation.*
 
 ---
@@ -22,7 +22,7 @@ Turns out, it’s just your **own private network inside AWS** — like a person
 ```
 CIDR: 10.0.0.0/16
 ```
-![Create a VPC]("./images/VPC 1.png")
+![Create a VPC](./images/VPC-1.png)
 
 This gives you a private network with up to 65,536 IP addresses.
 
@@ -31,6 +31,7 @@ This gives you a private network with up to 65,536 IP addresses.
 Subnet A: 10.0.1.0/24 (us-east-1a)
 Subnet B: 10.0.2.0/24 (us-east-1b)
 ```
+![Create Subnet](./images/VPC-2.png)
 
 Separate AZs (Availability Zones) mean resilience — if one data center fails, your app keeps running in the other.
 
@@ -39,10 +40,15 @@ Add an **Internet Gateway** for external access and create a route table:
 Destination: 0.0.0.0/0  
 Target: Internet Gateway
 ```
+![Create Internet Gateway](./images/Create-VPC.png)
 
 **Security Groups:**
 - ALB SG: Allow HTTP (80) from anywhere  
-- EC2 SG: Allow HTTP only from ALB SG, and SSH (22) only from your IP  
+- EC2 SG: Allow HTTP only from ALB SG, and SSH (22) only from your IP
+
+![Create a VPC](./images/security-group-server.png)
+
+![Create a VPC](./images/security-group-alb.png)
 
 > 💡 **Tip:** Security Groups act like your firewall.  
 > They decide who can “knock” on your servers — and how.
@@ -58,12 +64,16 @@ Once your network is ready, launch two servers (EC2 instances), one per subnet.
 - OS: Ubuntu 24.04 LTS
 - Count: 2 (one per subnet)
 - Storage: 8GB gp3
+  
+![Create a VPC](./images/ec2-1.png)
 
 > ⚙️ Enable “Auto-assign public IP” temporarily for setup.  
 
 Now you’ve got two servers in different zones — a simple yet resilient architecture.  
 
 > 💬 *Each EC2 instance is a virtual machine. Splitting them across zones helps your app survive outages.*
+
+![Create a VPC](./images/instance.png)
 
 ---
 
@@ -78,23 +88,82 @@ Manually configuring servers gets old fast.
 web1 ansible_host=<ip1> ansible_user=ec2-user ansible_ssh_private_key_file=my-key.pem
 web2 ansible_host=<ip2> ansible_user=ec2-user ansible_ssh_private_key_file=my-key.pem
 ```
-
-**Playbook (`deploy.yml`):**
+**Inventory file - Dry test:**
+```
+ansible -i inventory.ini webservers -m ping
+```
+>Output:
+```
+web-server-1 | SUCCESS => {
+    "ansible_facts": {
+        "discovered_interpreter_python": "/usr/bin/python3"
+    },
+    "changed": false,
+    "ping": "pong"
+}
+web-server-2 | SUCCESS => {
+    "ansible_facts": {
+        "discovered_interpreter_python": "/usr/bin/python3"
+    },
+    "changed": false,
+    "ping": "pong"
+}
+```
+**Playbook (`deploy-website.yml`):**
 ```yaml
-- name: Deploy website
+---
+- name: Deploy Web Server with NGINX on Ubuntu EC2 Instances
   hosts: webservers
   become: yes
+  become_method: sudo
+
   tasks:
-    - yum: name='*' state=latest
-    - yum: name=[nginx, git] state=present
-    - git: repo='https://github.com/your/repo.git' dest=/tmp/website
-    - copy: src=/tmp/website/ dest=/usr/share/nginx/html/ remote_src=yes
-    - systemd: name=nginx state=started enabled=yes
+    - name: Update all packages
+      apt:
+        name: '*'
+        state: latest
+        update_cache: yes
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install NGINX
+      apt:
+        name: nginx
+        state: present
+
+    - name: Ensure NGINX is enabled to start on boot
+      systemd:
+        name: nginx
+        enabled: yes
 ```
 
 **Run it:**
 ```bash
-ansible-playbook -i inventory.ini deploy.yml
+ansible-playbook -i inventory.ini deploy-website.yml
+```
+>Output:
+```
+PLAY [Deploy Web Server with NGINX and PHP on Ubuntu EC2 Instances] ************************************************************************************************************************
+
+TASK [Gathering Facts] *********************************************************************************************************************************************************************
+ok: [web-server-1]
+ok: [web-server-2]
+
+TASK [Update all packages] *****************************************************************************************************************************************************************
+ok: [web-server-2]
+ok: [web-server-1]
+
+RUNNING HANDLER [restart nginx] ************************************************************************************************************************************************************
+changed: [web-server-1]
+changed: [web-server-2]
+
+PLAY RECAP *********************************************************************************************************************************************************************************
+web-server-1               : ok=27   changed=8    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+web-server-2               : ok=27   changed=8    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+
 ```
 
 > 💡 **Insight:** Ansible connects to your servers via SSH and runs all tasks simultaneously.  
@@ -122,8 +191,11 @@ AWS provides a DNS like:
 ```
 alb-xxxx.us-east-1.elb.amazonaws.com
 ```
+Visit that link in your browser — refreshing the page alternates between your EC2 servers. 
 
-Visit that link in your browser — refreshing the page alternates between your EC2 servers.  
+![Load Balancer](./images/instance-monitor2.png)
+
+![Load Balancer](./images/instance-monitor1.png)
 
 > ✅ You’ve just built a **redundant, fault-tolerant web infrastructure**.  
 
@@ -204,7 +276,7 @@ From here, you can enhance it with:
 
 ## ✍️ About the Author  
 
-**Nsikak Ubom** is an Application Manager passionate about cloud architecture, DevOps, and bridging the gap between technology and business growth.  
+**Nsikak Ubom** is passionate about cloud architecture, DevOps, and bridging the gap between technology and business growth.  
 He writes about practical cloud learning, automation, and digital innovation.
 
 📬 *Follow Nsikak on Medium for more AWS and DevOps learning stories.*
