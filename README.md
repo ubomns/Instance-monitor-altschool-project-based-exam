@@ -22,6 +22,7 @@ Turns out, it’s just your **own private network inside AWS** — like a person
 ```
 CIDR: 10.0.0.0/16
 ```
+![Create a VPC]("./images/VPC 1.png")
 
 This gives you a private network with up to 65,536 IP addresses.
 
