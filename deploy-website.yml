@@ -1,0 +1,215 @@
+---
+- name: Deploy Web Server with NGINX and PHP on Ubuntu EC2 Instances
+  hosts: webservers
+  become: yes
+  become_method: sudo
+  tasks:
+    - name: Update all packages
+      apt:
+        name: '*'
+        state: latest
+        update_cache: yes
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install NGINX
+      apt:
+        name: nginx
+        state: present
+
+    - name: Install PHP and required extensions
+      apt:
+        name:
+          - php-fpm
+          - php-curl
+          - php-json
+        state: present
+
+    - name: Get PHP-FPM version
+      shell: php -v | head -n 1 | cut -d' ' -f2 | cut -d'.' -f1,2
+      register: php_version
+      changed_when: false
+
+    - name: Ensure NGINX is enabled to start on boot
+      systemd:
+        name: nginx
+        enabled: yes
+
+    - name: Ensure PHP-FPM is enabled to start on boot
+      systemd:
+        name: "php{{ php_version.stdout }}-fpm"
+        enabled: yes
+        state: started
+
+    - name: Remove default NGINX welcome page
+      file:
+        path: /var/www/html/index.nginx-debian.html
+        state: absent
+      ignore_errors: yes
+
+    - name: Remove any existing index.html
+      file:
+        path: /var/www/html/index.html
+        state: absent
+      ignore_errors: yes
+
+    - name: Remove any existing instance-info.php
+      file:
+        path: /var/www/html/instance-info.php
+        state: absent
+      ignore_errors: yes
+
+    - name: Ensure NGINX html directory exists with correct permissions
+      file:
+        path: /var/www/html
+        state: directory
+        mode: '0755'
+        owner: www-data
+        group: www-data
+
+    - name: Copy index.html to NGINX directory
+      copy:
+        src: /home/king-nsikak/altschool/ansible-ec2/index.html
+        dest: /var/www/html/index.html
+        mode: '0644'
+        owner: www-data
+        group: www-data
+
+    - name: Copy instance-info.php to NGINX directory
+      copy:
+        src: /home/king-nsikak/altschool/ansible-ec2/instance-info.php
+        dest: /var/www/html/instance-info.php
+        mode: '0644'
+        owner: www-data
+        group: www-data
+
+    - name: Remove default NGINX site configuration
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Configure NGINX to listen on port 80 with PHP support
+      copy:
+        dest: /etc/nginx/sites-available/webapp
+        content: |
+          server {
+              listen 80 default_server;
+              listen [::]:80 default_server;
+              root /var/www/html;
+              index index.html index.php;
+              server_name _;
+
+              # Force connection close for better load balancing
+              keepalive_timeout 0;
+              keepalive_requests 1;
+              
+              # Add headers to prevent caching and force new connections
+              add_header Cache-Control "no-cache, no-store, must-revalidate, max-age=0";
+              add_header Pragma "no-cache";
+              add_header Expires "0";
+              add_header Connection "close";
+
+              location / {
+                  try_files $uri $uri/ =404;
+              }
+
+              # PHP processing
+              location ~ \.php$ {
+                  include snippets/fastcgi-php.conf;
+                  fastcgi_pass unix:/var/run/php/php{{ php_version.stdout }}-fpm.sock;
+                  fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                  include fastcgi_params;
+                  
+                  # Disable all caching for PHP
+                  fastcgi_cache_bypass 1;
+                  fastcgi_no_cache 1;
+                  fastcgi_keep_conn off;
+              }
+
+              # Deny access to .htaccess files
+              location ~ /\.ht {
+                  deny all;
+              }
+          }
+        mode: '0644'
+      notify: restart nginx
+
+    - name: Enable custom NGINX site
+      file:
+        src: /etc/nginx/sites-available/webapp
+        dest: /etc/nginx/sites-enabled/webapp
+        state: link
+      notify: restart nginx
+
+    - name: Test NGINX configuration
+      command: nginx -t
+      register: nginx_test
+      changed_when: false
+
+    - name: Display NGINX test results
+      debug:
+        var: nginx_test.stderr_lines
+
+    - name: Restart PHP-FPM service
+      systemd:
+        name: "php{{ php_version.stdout }}-fpm"
+        state: restarted
+
+    - name: Restart NGINX to apply changes
+      systemd:
+        name: nginx
+        state: restarted
+
+    - name: Wait for NGINX to be ready
+      wait_for:
+        port: 80
+        delay: 2
+        timeout: 30
+
+    - name: Ensure NGINX is running
+      systemd:
+        name: nginx
+        state: started
+        enabled: yes
+
+    - name: Get IMDSv2 token
+      uri:
+        url: http://169.254.169.254/latest/api/token
+        method: PUT
+        headers:
+          X-aws-ec2-metadata-token-ttl-seconds: "21600"
+        return_content: yes
+        timeout: 5
+      register: imds_token
+      ignore_errors: yes
+
+    - name: Get instance public IP from EC2 metadata (IMDSv2)
+      uri:
+        url: http://169.254.169.254/latest/meta-data/public-ipv4
+        headers:
+          X-aws-ec2-metadata-token: "{{ imds_token.content }}"
+        return_content: yes
+        timeout: 5
+      register: public_ip
+      when: imds_token is succeeded
+      ignore_errors: yes
+
+    - name: Display deployment information
+      debug:
+        msg:
+          - "=========================================="
+          - "Deployment Successful!"
+          - "=========================================="
+          - "Instance Private IP: {{ ansible_default_ipv4.address }}"
+          - "Instance Public IP: {{ public_ip.content | default('N/A') }}"
+          - "Access via ALB: http://YOUR-ALB-DNS-NAME"
+          - "=========================================="
+
+  handlers:
+    - name: restart nginx
+      systemd:
+        name: nginx
+        state: restarted
